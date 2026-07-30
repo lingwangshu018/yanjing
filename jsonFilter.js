@@ -224,3 +224,186 @@ export function salvageChatMessages(text) {
 }
 
 window.salvageChatMessages = salvageChatMessages;
+
+const BACKUP_FORMAT = 'jx-backup';
+const BACKUP_VERSION = 1;
+const BLOCKED_BACKUP_KEYS = new Set(['api_key']);
+
+const isPlainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const cloneBackupValue = value => {
+    if (typeof structuredClone === 'function') return structuredClone(value);
+    return JSON.parse(JSON.stringify(value));
+};
+
+const getBackupDb = () => {
+    const db = window.SimulatorAPI?.db || window.db;
+    if (!db?.idb || !db.storeName) {
+        throw new Error('数据库尚未初始化，请等待页面加载完成后重试');
+    }
+    return db;
+};
+
+const normalizeBackupEnvelope = input => {
+    let parsed = input;
+    if (typeof input === 'string') {
+        try {
+            parsed = JSON.parse(input);
+        } catch (_) {
+            throw new Error('备份文件不是有效 JSON');
+        }
+    }
+
+    if (!isPlainObject(parsed)) throw new Error('备份根节点必须是对象');
+
+    if (parsed.format === BACKUP_FORMAT) {
+        if (!Number.isInteger(parsed.version) || parsed.version < 1) {
+            throw new Error('备份版本号无效');
+        }
+        if (!isPlainObject(parsed.data)) throw new Error('备份缺少有效 data 对象');
+        return parsed;
+    }
+
+    // 兼容旧版：允许直接使用键值对象作为备份数据。
+    return {
+        format: BACKUP_FORMAT,
+        version: 0,
+        createdAt: null,
+        data: parsed,
+        legacy: true
+    };
+};
+
+export const validateJxBackup = input => {
+    const envelope = normalizeBackupEnvelope(input);
+    const entries = Object.entries(envelope.data);
+    if (entries.length === 0) throw new Error('备份中没有可导入的数据');
+    if (entries.length > 5000) throw new Error('备份键数量异常，已拒绝导入');
+
+    const errors = [];
+    const warnings = [];
+    const safeEntries = [];
+    let estimatedBytes = 0;
+
+    for (const [rawKey, value] of entries) {
+        const key = String(rawKey || '').trim();
+        if (!key) {
+            errors.push('发现空键名');
+            continue;
+        }
+        if (key.length > 200) {
+            errors.push(`键名过长：${key.slice(0, 40)}…`);
+            continue;
+        }
+        if (BLOCKED_BACKUP_KEYS.has(key)) {
+            warnings.push(`已跳过敏感字段：${key}`);
+            continue;
+        }
+
+        let cloned;
+        try {
+            cloned = cloneBackupValue(value);
+            estimatedBytes += JSON.stringify(cloned)?.length || 0;
+        } catch (_) {
+            errors.push(`字段无法序列化：${key}`);
+            continue;
+        }
+
+        safeEntries.push([key, cloned]);
+    }
+
+    if (estimatedBytes > 100 * 1024 * 1024) {
+        errors.push('备份体积超过 100 MB，已拒绝导入');
+    } else if (estimatedBytes > 25 * 1024 * 1024) {
+        warnings.push('备份体积较大，导入可能需要一些时间');
+    }
+
+    if (safeEntries.length === 0) errors.push('没有可安全导入的字段');
+
+    return {
+        valid: errors.length === 0,
+        errors,
+        warnings,
+        entries: safeEntries,
+        format: envelope.format,
+        version: envelope.version,
+        legacy: Boolean(envelope.legacy),
+        estimatedBytes
+    };
+};
+
+export const exportJxBackup = async () => {
+    const db = getBackupDb();
+    const data = await new Promise((resolve, reject) => {
+        const transaction = db.idb.transaction([db.storeName], 'readonly');
+        const store = transaction.objectStore(db.storeName);
+        const keyRequest = store.getAllKeys();
+        const valueRequest = store.getAll();
+        transaction.oncomplete = () => {
+            const result = {};
+            keyRequest.result.forEach((key, index) => {
+                const normalizedKey = String(key);
+                if (!BLOCKED_BACKUP_KEYS.has(normalizedKey)) {
+                    result[normalizedKey] = valueRequest.result[index];
+                }
+            });
+            resolve(result);
+        };
+        transaction.onerror = () => reject(transaction.error || new Error('读取备份数据失败'));
+        transaction.onabort = () => reject(transaction.error || new Error('备份事务已中止'));
+    });
+
+    return {
+        format: BACKUP_FORMAT,
+        version: BACKUP_VERSION,
+        createdAt: new Date().toISOString(),
+        schemaVersion: Number(data.data_schema_version || 0),
+        data
+    };
+};
+
+export const importJxBackup = async (input, options = {}) => {
+    const validation = validateJxBackup(input);
+    if (!validation.valid) throw new Error(`备份校验失败：${validation.errors.join('；')}`);
+    if (options.dryRun) return { ...validation, imported: 0, dryRun: true };
+
+    const db = getBackupDb();
+    const snapshot = options.createSnapshot === false ? null : await exportJxBackup();
+
+    try {
+        await new Promise((resolve, reject) => {
+            const transaction = db.idb.transaction([db.storeName], 'readwrite');
+            const store = transaction.objectStore(db.storeName);
+
+            if (options.replace === true) store.clear();
+            validation.entries.forEach(([key, value]) => store.put(value, key));
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error || new Error('导入事务失败'));
+            transaction.onabort = () => reject(transaction.error || new Error('导入事务已回滚'));
+        });
+    } catch (error) {
+        // IndexedDB 事务本身具备原子性；这里返回快照，方便界面提供下载或人工恢复。
+        error.backupSnapshot = snapshot;
+        throw error;
+    }
+
+    if (typeof db.refreshWorldBookDiagnosticCache === 'function') {
+        await db.refreshWorldBookDiagnosticCache().catch(() => {});
+    }
+
+    return {
+        imported: validation.entries.length,
+        warnings: validation.warnings,
+        legacy: validation.legacy,
+        snapshot
+    };
+};
+
+window.JXBackupGuard = {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    validate: validateJxBackup,
+    export: exportJxBackup,
+    import: importJxBackup
+};
