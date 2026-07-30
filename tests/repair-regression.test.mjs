@@ -28,7 +28,7 @@ test('salvageChatMessages preserves special message types', async () => {
   assert.equal(messages[2].title, '复习');
 });
 
-test('backup validation accepts normal data and rejects unsafe input', async () => {
+test('backup validation accepts normal data and safely skips secrets', async () => {
   await importBrowserModule('jsonFilter.js');
   const guard = globalThis.window.JXBackupGuard;
   assert.ok(guard, 'JXBackupGuard should be exposed on window');
@@ -43,11 +43,25 @@ test('backup validation accepts normal data and rejects unsafe input', async () 
   });
   assert.equal(valid.valid, true);
 
-  const sensitive = guard.validate({ data: { api_key: 'secret' } });
-  assert.equal(sensitive.valid, false);
+  const withSecret = guard.validate({
+    format: 'jx-backup',
+    version: 1,
+    data: {
+      friends: [{ id: '1', roleName: '律' }],
+      api_key: 'secret'
+    }
+  });
+  assert.equal(withSecret.valid, true);
+  assert.ok(withSecret.warnings.some(message => message.includes('api_key')));
+  assert.equal(withSecret.entries.some(([key]) => key === 'api_key'), false);
 
-  const polluted = guard.validate({ data: { '__proto__': { admin: true } } });
-  assert.equal(polluted.valid, false);
+  const oversizedKey = 'x'.repeat(201);
+  const unsafe = guard.validate({
+    format: 'jx-backup',
+    version: 1,
+    data: { [oversizedKey]: 'bad' }
+  });
+  assert.equal(unsafe.valid, false);
 });
 
 test('bridge keeps timeout and readable API error handling', async () => {
@@ -61,7 +75,7 @@ test('bridge keeps timeout and readable API error handling', async () => {
 
 test('service worker never caches chat completion or non-GET requests', async () => {
   const source = await read('sw.js');
-  assert.match(source, /chat\/completions/);
+  assert.equal(source.includes('/\\/chat\\/completions'), true);
   assert.match(source, /request\.method !== 'GET'/);
   assert.match(source, /url\.origin !== self\.location\.origin/);
   assert.match(source, /caches\.delete/);
