@@ -105,40 +105,48 @@ export function salvageChatMessages(text) {
                     });
                 }
             } else if (type === 'image') {
-                let urlMatch = chunk.match(/(?:"|')?url(?:"|')?\s*:\s*(?:"|')([^"']*)/);
-                if (urlMatch) {
+                // 兼容历史输出 url/text，以及当前协议 description
+                let imageMatch = chunk.match(/(?:"|')?(?:url|description|text)(?:"|')?\s*:\s*(?:"|')([^"']*)/);
+                if (imageMatch) {
                     parsedMessages.push({
                         type: 'image',
-                        url: urlMatch[1]
+                        url: imageMatch[1],
+                        description: imageMatch[1],
+                        text: imageMatch[1]
                     });
                 }
             } else if (type === 'voice') {
-                let contentMatch = chunk.match(/(?:"|')?content(?:"|')?\s*:\s*(?:"|')([^"']*)/);
+                // 兼容 text/content 两套字段
+                let contentMatch = chunk.match(/(?:"|')?(?:text|content)(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 let durationMatch = chunk.match(/(?:"|')?duration(?:"|')?\s*:\s*(\d+)/);
                 if (contentMatch) {
                     parsedMessages.push({
                         type: 'voice',
                         content: contentMatch[1],
+                        text: contentMatch[1],
                         duration: durationMatch ? parseInt(durationMatch[1]) : Math.ceil(contentMatch[1].length / 4)
                     });
                 }
             } else if (type === 'text') {
-                let contentMatch = chunk.match(/(?:"|')?content(?:"|')?\s*:\s*(?:"|')([^"']*)/);
+                // 主协议使用 text，旧版本曾使用 content；两者都必须保留
+                let contentMatch = chunk.match(/(?:"|')?(?:text|content)(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 if (contentMatch) {
                     parsedMessages.push({
                         type: 'text',
+                        text: contentMatch[1],
                         content: contentMatch[1]
                     });
                 }
             } else if (type === 'quote_reply') {
-                let textMatch = chunk.match(/(?:"|')?text(?:"|')?\s*:\s*(?:"|')([^"']*)/);
+                let textMatch = chunk.match(/(?:"|')?(?:text|content)(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 let quoteContentMatch = chunk.match(/(?:"|')?content(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 let quoteSenderMatch = chunk.match(/(?:"|')?senderName(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 
                 if (textMatch) {
                     let msgObj = {
                         type: 'quote_reply',
-                        text: textMatch[1]
+                        text: textMatch[1],
+                        content: textMatch[1]
                     };
                     if (quoteContentMatch) {
                         msgObj.quote = {
@@ -149,12 +157,13 @@ export function salvageChatMessages(text) {
                     parsedMessages.push(msgObj);
                 }
             } else if (type === 'emoticon') {
-                let urlMatch = chunk.match(/(?:"|')?url(?:"|')?\s*:\s*(?:"|')([^"']*)/);
+                let urlMatch = chunk.match(/(?:"|')?(?:url|text)(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 let meaningMatch = chunk.match(/(?:"|')?meaning(?:"|')?\s*:\s*(?:"|')([^"']*)/);
                 if (urlMatch) {
                     parsedMessages.push({
                         type: 'emoticon',
                         url: urlMatch[1],
+                        text: urlMatch[1],
                         meaning: meaningMatch ? meaningMatch[1] : '表情'
                     });
                 }
@@ -170,7 +179,7 @@ export function salvageChatMessages(text) {
     // 如果没有提取到任何结构化消息，降级为纯文本
     let cleanText = cleanJsonFormatting(text);
     if (cleanText) {
-        return [{ type: 'text', content: cleanText, isSalvaged: true }];
+        return [{ type: 'text', text: cleanText, content: cleanText, isSalvaged: true }];
     }
 
     return null;
