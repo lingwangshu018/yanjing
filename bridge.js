@@ -143,19 +143,40 @@ const installWorldBookDiagnostics = () => {
 
 const DATA_URL_PATTERN = /data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=\s]+/g;
 const LARGE_BASE64_PATTERN = /[a-zA-Z0-9+/]{20000,}={0,2}/g;
+const IMAGE_DESCRIPTION_PATTERN = /\[(?:图片|image)\s*[:：]\s*([^\]\n]{1,200})\]/gi;
+const REPEATED_IMAGE_PLACEHOLDER_PATTERN = /(?:\[图片\]\s*){2,}/g;
+
+const normalizeHistoricalImageText = text => {
+    if (typeof text !== 'string' || !text) return text;
+
+    let normalized = text
+        .replace(IMAGE_DESCRIPTION_PATTERN, (_, description) => {
+            const cleanDescription = normalizeText(description);
+            return cleanDescription ? `[图片：${cleanDescription}]` : '[图片]';
+        })
+        .replace(DATA_URL_PATTERN, '[图片]')
+        .replace(LARGE_BASE64_PATTERN, '[图片]')
+        .replace(/\[(?:图片数据已省略|大型二进制数据已省略)\]/g, '[图片]')
+        .replace(REPEATED_IMAGE_PLACEHOLDER_PATTERN, '[图片] ');
+
+    // 清理图片占位符前后因删除超长数据留下的大段空白，但不破坏正常换行结构。
+    normalized = normalized
+        .replace(/[ \t]+\[图片/g, ' [图片')
+        .replace(/\[图片\][ \t]+/g, '[图片] ')
+        .replace(/[ \t]{3,}/g, '  ');
+
+    return normalized;
+};
 
 const sanitizeChatContent = content => {
-    if (typeof content === 'string') {
-        return content
-            .replace(DATA_URL_PATTERN, '[图片数据已省略]')
-            .replace(LARGE_BASE64_PATTERN, '[大型二进制数据已省略]');
-    }
+    if (typeof content === 'string') return normalizeHistoricalImageText(content);
 
     if (Array.isArray(content)) {
         return content.map(part => {
             if (!part || typeof part !== 'object') return part;
+            // 多模态 image_url 是当前有效图片输入，不删除；只清理普通文本里的历史图片数据。
             if (part.type === 'text' && typeof part.text === 'string') {
-                return { ...part, text: sanitizeChatContent(part.text) };
+                return { ...part, text: normalizeHistoricalImageText(part.text) };
             }
             return part;
         });
@@ -198,17 +219,19 @@ const installChatRequestGuard = () => {
                 if (Array.isArray(payload.messages)) {
                     inspectActualWorldBookInjection(payload.messages);
                     let removedChars = 0;
+                    let normalizedImageMessages = 0;
                     payload.messages = payload.messages.map(message => {
                         if (!message || typeof message !== 'object') return message;
-                        const before = typeof message.content === 'string' ? message.content.length : 0;
+                        const beforeText = typeof message.content === 'string' ? message.content : '';
                         const content = sanitizeChatContent(message.content);
-                        const after = typeof content === 'string' ? content.length : before;
-                        removedChars += Math.max(0, before - after);
+                        const afterText = typeof content === 'string' ? content : '';
+                        removedChars += Math.max(0, beforeText.length - afterText.length);
+                        if (beforeText !== afterText && afterText.includes('[图片')) normalizedImageMessages += 1;
                         return { ...message, content };
                     });
 
-                    if (removedChars > 0) {
-                        console.warn(`[请求保护] 已从聊天上下文中移除约 ${removedChars} 个图片/Base64字符，避免 token 溢出。`);
+                    if (removedChars > 0 || normalizedImageMessages > 0) {
+                        console.warn(`[请求保护] 已规范化 ${normalizedImageMessages} 条历史图片消息，并移除约 ${removedChars} 个图片/Base64字符。`);
                     }
                     init = { ...init, body: JSON.stringify(payload) };
                 }
