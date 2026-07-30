@@ -1,4 +1,5 @@
 const normalizeText = value => typeof value === 'string' ? value.trim() : '';
+const CURRENT_DATA_SCHEMA_VERSION = 2;
 
 const normalizeWorldBook = (book, type = 'local') => {
     if (!book || typeof book !== 'object') return book;
@@ -137,12 +138,70 @@ window.SimulatorAPI = {
                         db.createObjectStore(this.storeName);
                     }
                 };
-                request.onsuccess = (event) => {
+                request.onsuccess = async (event) => {
                     this.idb = event.target.result;
+                    try {
+                        await this.migrateDataIfNeeded();
+                    } catch (error) {
+                        // 迁移失败不能阻止应用启动，也绝不清空旧数据。
+                        console.error('[数据迁移] 执行失败，已保留原数据并继续启动:', error);
+                    }
                     resolve();
                 };
                 request.onerror = (event) => reject(event.target.error);
             });
+        },
+        _getRaw: function(key, defaultValue) {
+            return new Promise((resolve) => {
+                if (!this.idb) return resolve(defaultValue);
+                const transaction = this.idb.transaction([this.storeName], 'readonly');
+                const store = transaction.objectStore(this.storeName);
+                const request = store.get(key);
+                request.onsuccess = () => resolve(request.result !== undefined ? request.result : defaultValue);
+                request.onerror = () => resolve(defaultValue);
+            });
+        },
+        _putRaw: function(key, value) {
+            return new Promise((resolve, reject) => {
+                if (!this.idb) return resolve();
+                const transaction = this.idb.transaction([this.storeName], 'readwrite');
+                const store = transaction.objectStore(this.storeName);
+                const request = store.put(value, key);
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject(event.target.error);
+            });
+        },
+        migrateDataIfNeeded: async function() {
+            const storedVersion = Number(await this._getRaw('data_schema_version', 0)) || 0;
+            if (storedVersion >= CURRENT_DATA_SCHEMA_VERSION) return;
+
+            console.info(`[数据迁移] 开始从版本 ${storedVersion} 迁移到 ${CURRENT_DATA_SCHEMA_VERSION}。`);
+
+            // 逐项先读取原始数据，再生成完整的新值。只有成功生成后才覆盖对应键。
+            const rawGlobalBooks = await this._getRaw('global_world_books', []);
+            const rawLocalBooks = await this._getRaw('local_world_books', []);
+            const rawFriends = await this._getRaw('friends', []);
+            const rawMountedBooks = await this._getRaw('chat_world_books', {});
+
+            const globalBooks = Array.isArray(rawGlobalBooks)
+                ? rawGlobalBooks.map(book => normalizeWorldBook(book, 'global')).filter(book => book?.content)
+                : [];
+            const localBooks = Array.isArray(rawLocalBooks)
+                ? rawLocalBooks.map(book => normalizeWorldBook(book, 'local')).filter(book => book?.content)
+                : [];
+            const friends = Array.isArray(rawFriends) ? rawFriends.map(normalizeFriend) : [];
+            const mountedBooks = normalizeMountedWorldBooks(rawMountedBooks);
+
+            await this._putRaw('global_world_books', globalBooks);
+            await this._putRaw('local_world_books', localBooks);
+            await this._putRaw('friends', friends);
+            await this._putRaw('chat_world_books', mountedBooks);
+
+            // 版本号必须最后写入；中途失败时，下次启动会安全重试。
+            await this._putRaw('data_schema_version', CURRENT_DATA_SCHEMA_VERSION);
+            globalBooks.forEach(book => this._knownGlobalWorldBookIds.add(String(book.id)));
+
+            console.info(`[数据迁移] 已完成版本 ${CURRENT_DATA_SCHEMA_VERSION}：角色 ${friends.length} 个，全局世界书 ${globalBooks.length} 本，局部世界书 ${localBooks.length} 本。`);
         },
         normalizeValue: function(key, value) {
             if (key === 'global_world_books' && Array.isArray(value)) {
