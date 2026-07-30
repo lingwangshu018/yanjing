@@ -8249,8 +8249,25 @@ body.forum-not-ins .forum-story-ring {
                                 </div>
                             </div>
                         </div>
+                        <div class="form-group" style="margin-top: 20px; border-top: 1px solid #eaeaea; padding-top: 20px;">
+                            <div class="flex-between" style="margin-bottom: 15px;">
+                                <label style="margin:0; font-weight: 600;">MCP</label>
+                                <label class="switch memory-switch" style="transform: scale(0.8); transform-origin: right center;"><input type="checkbox" id="mcp-enabled-switch" onchange="document.getElementById('mcp-fields').style.display=this.checked?'block':'none'"><span class="slider"></span></label>
+                            </div>
+                            <div style="font-size: 11px; color: #888; margin-bottom: 15px; line-height: 1.6;">填写支持 Streamable HTTP 的 MCP 接口。地址默认留空，连接令牌可选。</div>
+                            <div id="mcp-fields" style="display: none;">
+                                <div class="form-group"><label>MCP 服务地址</label><input type="url" id="mcp-url" placeholder="https://example.com/api/mcp" autocomplete="off"></div>
+                                <div class="form-group"><label>连接令牌（可选）</label><input type="password" id="mcp-token" placeholder="Bearer Token" autocomplete="off" onfocus="this.type='text'" onblur="this.type='password'"></div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <div class="flex-between" style="padding: 10px 0;"><span style="font-size: 14px; color: #444;">允许读取</span><label class="switch memory-switch" style="transform: scale(0.8); transform-origin: right center;"><input type="checkbox" id="mcp-allow-read-switch" checked><span class="slider"></span></label></div>
+                                    <div class="flex-between" style="padding: 10px 0; border-top: 1px solid #f0f0f0;"><span style="font-size: 14px; color: #444;">允许写入</span><label class="switch memory-switch" style="transform: scale(0.8); transform-origin: right center;"><input type="checkbox" id="mcp-allow-write-switch"><span class="slider"></span></label></div>
+                                </div>
+                                <button type="button" id="test-mcp-btn" style="width:100%;border:1px solid #d8d8d8;background:#fff;color:#444;border-radius:14px;padding:13px 16px;font-size:14px;cursor:pointer;">测试连接</button>
+                                <div id="mcp-test-status" style="font-size:11px;color:#888;margin-top:10px;line-height:1.5;min-height:16px;"></div>
+                            </div>
+                        </div>
                     </div>
-                    <button class="btn-primary" id="save-api-btn" style="background: #555; color: #fff; border-radius: 16px; padding: 16px; font-size: 16px;">保存设置</button>
+                    <button class="btn-primary" id="save-api-btn"                    <button class="btn-primary" id="save-api-btn" style="background: #555; color: #fff; border-radius: 16px; padding: 16px; font-size: 16px;">保存设置</button>
                 </div>
             </div>
 
@@ -31588,6 +31605,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
     </script>
+    <script src="mcpClient.js"></script>
     <script src="main.js"></script>
     <script>
        (function() {
