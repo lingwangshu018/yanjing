@@ -15655,6 +15655,15 @@ const url = localStorage.getItem('api_url'), key = localStorage.getItem('api_key
                 imgModelSelect.value = savedImgModel;
             }
 
+            const mcpEnabled = localStorage.getItem('mcp_enabled') === 'true';
+            if ($('mcp-enabled-switch')) $('mcp-enabled-switch').checked = mcpEnabled;
+            if ($('mcp-fields')) $('mcp-fields').style.display = mcpEnabled ? 'block' : 'none';
+            if ($('mcp-url')) $('mcp-url').value = localStorage.getItem('mcp_url') || '';
+            if ($('mcp-token')) $('mcp-token').value = localStorage.getItem('mcp_token') || '';
+            if ($('mcp-allow-read-switch')) $('mcp-allow-read-switch').checked = localStorage.getItem('mcp_allow_read') !== 'false';
+            if ($('mcp-allow-write-switch')) $('mcp-allow-write-switch').checked = localStorage.getItem('mcp_allow_write') === 'true';
+            if ($('mcp-test-status')) $('mcp-test-status').textContent = '';
+
             renderApiPresets();
             renderImageApiPresets();
             switchPage('api-settings-detail'); 
@@ -15753,6 +15762,25 @@ const url = localStorage.getItem('api_url'), key = localStorage.getItem('api_key
             on($('quick-fetch-models-btn'), 'click', () => fetchModelsForSelect('api-url', 'api-key', 'quick-api-model', 'quick-fetch-models-btn'));
         }
 
+        if ($('test-mcp-btn')) {
+            on($('test-mcp-btn'), 'click', async () => {
+                const url = $('mcp-url')?.value.trim() || '';
+                const token = $('mcp-token')?.value.trim() || '';
+                const status = $('mcp-test-status');
+                const btn = $('test-mcp-btn');
+                if (!url) { status.textContent = '请先填写 MCP 服务地址'; status.style.color = '#c0392b'; return; }
+                try { new URL(url); } catch (_) { status.textContent = '服务地址格式不正确'; status.style.color = '#c0392b'; return; }
+                const oldText = btn.textContent; btn.disabled = true; btn.textContent = '连接中…';
+                status.textContent = '正在初始化 MCP 连接…'; status.style.color = '#888';
+                try {
+                    const result = await window.MCPClient.testConnection({ url, token });
+                    status.textContent = `连接成功 · 发现 ${result.toolCount} 个工具${result.serverName ? ` · ${result.serverName}` : ''}`;
+                    status.style.color = '#2e7d32';
+                } catch (error) { status.textContent = `连接失败：${error.message || error}`; status.style.color = '#c0392b'; }
+                finally { btn.disabled = false; btn.textContent = oldText; }
+            });
+        }
+
         on($('save-api-btn'), 'click', () => { 
             ['url','key','model'].forEach(k => localStorage.setItem(`api_${k}`, $(`api-${k}`).value)); 
             localStorage.setItem('api_temp', $('api-temp').value);
@@ -15785,6 +15813,17 @@ const url = localStorage.getItem('api_url'), key = localStorage.getItem('api_key
                     if (el) localStorage.setItem(`memory_api_${k}`, el.value.trim());
                 });
             }
+
+            const mcpEnabled = Boolean($('mcp-enabled-switch')?.checked);
+            const mcpUrl = $('mcp-url')?.value.trim() || '';
+            if (mcpEnabled && !mcpUrl) { showAlert('启用 MCP 前请填写服务地址'); return; }
+            if (mcpUrl) { try { new URL(mcpUrl); } catch (_) { showAlert('MCP 服务地址格式不正确'); return; } }
+            localStorage.setItem('mcp_enabled', mcpEnabled ? 'true' : 'false');
+            localStorage.setItem('mcp_url', mcpUrl);
+            localStorage.setItem('mcp_token', $('mcp-token')?.value.trim() || '');
+            localStorage.setItem('mcp_allow_read', $('mcp-allow-read-switch')?.checked ? 'true' : 'false');
+            localStorage.setItem('mcp_allow_write', $('mcp-allow-write-switch')?.checked ? 'true' : 'false');
+            window.dispatchEvent(new CustomEvent('mcp-config-changed'));
             
             const select = $('api-preset-select');
             if (select && select.value !== '') {
