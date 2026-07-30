@@ -60,5 +60,11 @@ jobs:
           test -s jsonFilter.js
           test -s fixFormat.js
           grep -q "salvageChatMessages" jsonFilter.js
+          grep -q "JXBackupGuard" jsonFilter.js
           grep -q "parseAndFixJsonMessage" fixFormat.js
+          grep -q "CHAT_REQUEST_TIMEOUT_MS" bridge.js
           echo "Repair modules are present"
+
+      - name: Run repair regression tests
+        shell: bash
+        run: node --test tests/repair-regression.test.mjs
