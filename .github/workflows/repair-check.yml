@@ -1,0 +1,64 @@
+name: Repair Check
+
+on:
+  push:
+    branches:
+      - main
+      - fix/context-and-chat-format
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            bridge.js
+            jsonFilter.js
+            fixFormat.js
+            chatPromptSettings.js
+            main.js
+            KeepAliveSystem.js
+            sw.js
+          )
+
+          for file in "${files[@]}"; do
+            if [ -f "$file" ]; then
+              echo "Checking $file"
+              node --check "$file"
+            fi
+          done
+
+      - name: Validate manifest JSON
+        shell: bash
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')); console.log('manifest.json is valid')"
+
+      - name: Verify required repair modules
+        shell: bash
+        run: |
+          test -s bridge.js
+          test -s jsonFilter.js
+          test -s fixFormat.js
+          grep -q "salvageChatMessages" jsonFilter.js
+          grep -q "parseAndFixJsonMessage" fixFormat.js
+          echo "Repair modules are present"
